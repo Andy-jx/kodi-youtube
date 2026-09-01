@@ -9,7 +9,7 @@ import xbmcgui
 import xbmcplugin
 import xbmcvfs
 
-from resources.lib import storage, debuglog
+from resources.lib import storage, debuglog, ytfeed
 from resources.lib.youtube import YouTubeClient, YouTubeError
 from resources.lib.player import play_video
 
@@ -56,12 +56,25 @@ def add_video(item):
     fav = storage.is_favorite(video_id)
     fav_label = '移出我喜欢' if fav else '加入我喜欢'
     fav_action = 'remove_favorite' if fav else 'add_favorite'
-    ctx = [(fav_label, 'RunPlugin(%s)' % plugin_url(action=fav_action, video_id=video_id, title=title, channel=channel, channel_id=channel_id, thumbnail=thumb))]
+    ctx = [(fav_label, 'RunPlugin(%s)' % plugin_url(
+        action=fav_action,
+        video_id=video_id,
+        title=title,
+        channel=channel,
+        channel_id=channel_id,
+        thumbnail=thumb,
+    ))]
     if channel_id:
-        ctx.append(('进入作者频道', 'Container.Update(%s)' % plugin_url(action='channel', channel_id=channel_id, title=channel)))
+        ctx.append(('进入作者频道', 'Container.Update(%s)' % plugin_url(
+            action='channel', channel_id=channel_id, title=channel)))
     ctx.append(('刷新本页', 'Container.Refresh'))
     li.addContextMenuItems(ctx)
-    xbmcplugin.addDirectoryItem(HANDLE, plugin_url(action='play', video_id=video_id, title=title, channel=channel, thumbnail=thumb), li, False)
+    xbmcplugin.addDirectoryItem(
+        HANDLE,
+        plugin_url(action='play', video_id=video_id, title=title, channel=channel, thumbnail=thumb),
+        li,
+        False,
+    )
 
 
 def finish(content='videos'):
@@ -79,12 +92,6 @@ def log_error(prefix, exc):
 
 
 def setting_text(key, default=''):
-    """Read settings as text using Kodi's compatibility getter.
-
-    On some Kodi 21 builds getSettingString() can raise
-    TypeError('Invalid setting type') even for a string-backed setting.
-    getSetting() is compatible with both legacy and current settings schemas.
-    """
     try:
         value = ADDON.getSetting(key)
         return value if value not in (None, '') else default
@@ -133,6 +140,8 @@ def account_ready():
 
 
 def show_home():
+    # Keep the home screen completely local. No YouTube/yt-dlp work happens
+    # until the user actually opens an online list.
     if account_ready():
         add_folder('我的订阅', 'subscriptions')
         add_folder('YouTube 账号：Cookie 已导入', 'account_status')
@@ -150,16 +159,22 @@ def show_home():
 
 
 def render_result(result, continuation_action=None, continuation_params=None):
+    count = 0
     for item in result.get('items', []):
         if item.get('type') == 'video' and item.get('video_id'):
             add_video(item)
+            count += 1
         elif item.get('type') == 'channel' and item.get('channel_id'):
-            add_folder('[频道] ' + item.get('title', '频道'), 'channel', channel_id=item['channel_id'], title=item.get('title', ''))
+            add_folder('[频道] ' + item.get('title', '频道'), 'channel',
+                       channel_id=item['channel_id'], title=item.get('title', ''))
+            count += 1
     token = result.get('continuation')
     if token and continuation_action:
         params = dict(continuation_params or {})
         params['continuation'] = token
         add_folder('下一页 ▶', continuation_action, **params)
+    if count == 0:
+        raise YouTubeError('没有解析到可显示的视频，请打开“诊断信息”查看原因')
     finish()
 
 
@@ -177,7 +192,6 @@ def import_cookies():
         return
 
     debuglog.write('cookie import', 'file selected')
-
     try:
         xbmcvfs.mkdirs(PROFILE)
     except Exception:
@@ -190,7 +204,6 @@ def import_cookies():
             return
 
     remove_cookie_file()
-
     try:
         copied = xbmcvfs.copy(source, COOKIE_FILE)
         if not copied or not cookie_exists():
@@ -213,7 +226,6 @@ def import_cookies():
             return
 
     debuglog.write('cookie import', 'copy completed')
-
     try:
         cookie_client = client()
         if not cookie_client.has_account_cookies():
@@ -228,9 +240,8 @@ def import_cookies():
         except Exception:
             pass
 
-        # A successful local cookie parse is enough to keep the file. YouTube can
-        # return different signed-in page shapes, consent/interstitial pages, or
-        # transient challenge responses, so an online probe is advisory only.
+        # Online probing is advisory only. Functional paths (subscriptions and
+        # playback) are the real test of whether YouTube accepts this session.
         debuglog.write('cookie validation', 'local format accepted; starting advisory online test')
         try:
             online_ok = cookie_client.account_test()
@@ -243,20 +254,15 @@ def import_cookies():
             notify('YouTube Cookie 已导入，账号在线验证通过')
         else:
             debuglog.write('cookie validation', 'online test not confirmed; keeping cookie file')
-            notify('Cookie 已导入；在线验证暂未确认，可直接测试订阅、搜索和限制视频', xbmcgui.NOTIFICATION_WARNING)
-
+            notify('Cookie 已导入；可直接测试订阅、搜索和限制视频', xbmcgui.NOTIFICATION_WARNING)
         xbmc.executebuiltin('Container.Refresh')
     except Exception as exc:
-        # Keep a locally valid cookie file even if the advisory validation path
-        # itself changes. Playback/search/subscriptions are the real functional
-        # tests and will provide their own diagnostics.
         log_error('cookie validation failed', exc)
         if cookie_exists():
-            notify('Cookie 已保存；在线验证发生错误，可先直接测试播放或查看诊断信息', xbmcgui.NOTIFICATION_WARNING)
+            notify('Cookie 已保存；可先直接测试播放或查看诊断信息', xbmcgui.NOTIFICATION_WARNING)
             xbmc.executebuiltin('Container.Refresh')
         else:
             notify('Cookie 验证发生错误，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
-
     finish('files')
 
 
@@ -265,18 +271,18 @@ def account_status():
         notify('当前没有可用的 YouTube Cookie', xbmcgui.NOTIFICATION_WARNING)
         finish('files')
         return
-
     valid = False
     try:
         valid = client().account_test()
     except Exception as exc:
         log_error('account status check failed', exc)
-
     if valid:
         status = 'Cookie 已导入，当前在线验证通过。'
     else:
-        status = 'Cookie 已导入；在线验证暂未确认。\n这不会阻止插件继续尝试订阅、搜索和账号授权视频播放。'
-    choice = xbmcgui.Dialog().yesno('YouTube 账号', status + '\n\n是否移除当前 Cookie？', yeslabel='移除 Cookie', nolabel='保留')
+        status = 'Cookie 已导入；在线验证暂未确认。\n插件仍会直接使用它加载订阅和账号授权视频。'
+    choice = xbmcgui.Dialog().yesno(
+        'YouTube 账号', status + '\n\n是否移除当前 Cookie？',
+        yeslabel='移除 Cookie', nolabel='保留')
     if choice:
         remove_cookie_file()
         notify('已移除 YouTube Cookie')
@@ -306,16 +312,24 @@ def do_search(params):
     q = params.get('q', '')
     if not q:
         return search_prompt()
-    render_result(client().search(q, continuation=params.get('continuation')), 'search', {'q': q})
+    try:
+        result = ytfeed.search(ADDON, PROFILE, q, COOKIE_FILE if cookie_exists() else '')
+    except ytfeed.FeedError as exc:
+        # Search is mandatory, so keep the previous Innertube path as a second
+        # independent fallback if yt-dlp search has a temporary regression.
+        debuglog.write('search fallback', str(exc)[:500])
+        result = client().search(q)
+    render_result(result)
 
 
 def do_trending(params):
-    render_result(client().trending(continuation=params.get('continuation')), 'trending', {})
+    result = ytfeed.recommended(ADDON, PROFILE, COOKIE_FILE if cookie_exists() else '')
+    render_result(result)
 
 
 def do_subscriptions(params):
-    result = client().subscriptions(continuation=params.get('continuation'))
-    render_result(result, 'subscriptions', {})
+    result = ytfeed.subscriptions(ADDON, PROFILE, COOKIE_FILE if cookie_exists() else '')
+    render_result(result)
 
 
 def do_channel(params):
@@ -342,7 +356,9 @@ def show_history():
 
 def show_search_history():
     for q in storage.get_searches():
-        add_folder(q, 'search', q=q, context=[('删除这条记录', 'RunPlugin(%s)' % plugin_url(action='remove_search', q=q))])
+        add_folder(q, 'search', q=q, context=[
+            ('删除这条记录', 'RunPlugin(%s)' % plugin_url(action='remove_search', q=q))
+        ])
     finish('files')
 
 
@@ -391,7 +407,12 @@ def route():
         elif action == 'open_url_prompt':
             open_url_prompt()
         elif action == 'play':
-            item = {'video_id': params.get('video_id', ''), 'title': params.get('title', ''), 'channel': params.get('channel', ''), 'thumbnail': params.get('thumbnail', '')}
+            item = {
+                'video_id': params.get('video_id', ''),
+                'title': params.get('title', ''),
+                'channel': params.get('channel', ''),
+                'thumbnail': params.get('thumbnail', ''),
+            }
             storage.add_history(item)
             play_video(HANDLE, item['video_id'], ADDON, COOKIE_FILE)
         elif action == 'add_favorite':
@@ -410,6 +431,10 @@ def route():
             finish('files')
         else:
             show_home()
+    except ytfeed.FeedError as exc:
+        log_error('feed error', exc)
+        notify(str(exc), xbmcgui.NOTIFICATION_ERROR)
+        finish()
     except YouTubeError as exc:
         log_error('YouTube error', exc)
         notify(str(exc), xbmcgui.NOTIFICATION_ERROR)
