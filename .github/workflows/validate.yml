@@ -24,11 +24,20 @@ jobs:
           ET.parse('plugin.video.andyoutube/resources/settings.xml')
           print('XML OK')
           PY
+      - name: Read add-on version
+        id: addon
+        run: |
+          VERSION=$(python - <<'PY'
+          import xml.etree.ElementTree as ET
+          print(ET.parse('plugin.video.andyoutube/addon.xml').getroot().attrib['version'])
+          PY
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Build install ZIP
         run: |
           mkdir -p dist
-          zip -r "dist/plugin.video.andyoutube-1.0.0.zip" plugin.video.andyoutube -x '*/__pycache__/*' '*.pyc'
+          zip -r "dist/plugin.video.andyoutube-${{ steps.addon.outputs.version }}.zip" plugin.video.andyoutube -x '*/__pycache__/*' '*.pyc'
       - uses: actions/upload-artifact@v4
         with:
-          name: plugin.video.andyoutube-1.0.0
-          path: dist/plugin.video.andyoutube-1.0.0.zip
+          name: plugin.video.andyoutube-${{ steps.addon.outputs.version }}
+          path: dist/plugin.video.andyoutube-${{ steps.addon.outputs.version }}.zip
