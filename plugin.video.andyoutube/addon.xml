@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.6" provider-name="Andy-jx">
+<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.2.0" provider-name="Andy-jx">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="plugin.video.youtube" optional="true"/>
@@ -10,11 +10,11 @@
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">A lightweight YouTube browser for Kodi with account subscriptions, search, channels, local favorites and playback.</summary>
     <summary lang="zh_CN">适用于 Kodi 的轻量 YouTube 浏览插件，支持账号订阅、搜索、频道、本地喜欢和播放。</summary>
-    <description lang="zh_CN">无需个人 Google API Key。可导入用户自己的 YouTube cookies.txt，在 Kodi 中查看“我的订阅”，并使用同一登录态播放账号可观看的登录/年龄限制视频。发布版内置 yt-dlp/EJS，Windows 版同时内置 Deno 运行时。搜索支持 Innertube 与浏览器网页双路径兜底。</description>
+    <description lang="zh_CN">无需个人 Google API Key。核心在线列表改用 yt-dlp 自带并持续维护的 YouTube 推荐、订阅和搜索提取器，避免自行递归解析不断变化的 YouTube 网页结构。可导入用户自己的 cookies.txt，并使用同一登录态尝试播放账号可观看的登录/年龄限制视频。</description>
     <platform>all</platform>
     <license>MIT</license>
     <source>https://github.com/Andy-jx/kodi-youtube</source>
     <website>https://github.com/Andy-jx/kodi-youtube</website>
-    <news lang="zh_CN">1.1.6：Cookie 本地格式有效时不再因在线探测未确认而删除登录文件；在线验证改为提示性检查，订阅、搜索和账号授权视频播放可继续使用实际登录态测试。</news>
+    <news lang="zh_CN">1.2.0：推荐、我的订阅和搜索改用 yt-dlp 官方支持的 :ytrec、:ytsubs、ytsearch 提取器；首页保持纯本地，增加短时缓存，解决上一版卡顿和列表空白。</news>
   </extension>
 </addon>
