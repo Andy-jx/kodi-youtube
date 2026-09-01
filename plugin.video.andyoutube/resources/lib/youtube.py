@@ -146,14 +146,60 @@ class YouTubeClient:
             return ''
         if isinstance(obj, str):
             return obj
+        if not isinstance(obj, dict):
+            return ''
         if obj.get('simpleText'):
             return obj['simpleText']
-        return ''.join(x.get('text', '') for x in obj.get('runs', []))
+        if obj.get('content'):
+            return obj['content']
+        return ''.join(x.get('text', '') for x in obj.get('runs', []) if isinstance(x, dict))
 
     @staticmethod
     def _thumb(obj):
         thumbs = ((obj or {}).get('thumbnails') or [])
         return thumbs[-1].get('url', '') if thumbs else ''
+
+    @classmethod
+    def _image_url(cls, node):
+        urls = []
+
+        def walk(value):
+            if isinstance(value, list):
+                for x in value:
+                    walk(x)
+                return
+            if not isinstance(value, dict):
+                return
+            url = value.get('url')
+            if isinstance(url, str) and ('ytimg.com' in url or 'googleusercontent.com' in url):
+                urls.append(url)
+            for v in value.values():
+                walk(v)
+
+        walk(node)
+        return urls[-1] if urls else ''
+
+    @classmethod
+    def _channel_id_from_node(cls, node):
+        found = []
+
+        def walk(value):
+            if isinstance(value, list):
+                for x in value:
+                    walk(x)
+                return
+            if not isinstance(value, dict):
+                return
+            browse = value.get('browseEndpoint')
+            if isinstance(browse, dict):
+                bid = browse.get('browseId', '')
+                if isinstance(bid, str) and bid.startswith('UC'):
+                    found.append(bid)
+            for v in value.values():
+                walk(v)
+
+        walk(node)
+        return found[0] if found else ''
 
     @staticmethod
     def _duration_seconds(text):
@@ -166,21 +212,86 @@ class YouTubeClient:
             return 0
 
     def _video_from_renderer(self, r):
+        if not isinstance(r, dict):
+            return None
         vid = r.get('videoId')
         if not vid:
             return None
         channel_id = ''
-        channel = self._text(r.get('ownerText') or r.get('shortBylineText'))
-        runs = (r.get('ownerText') or r.get('shortBylineText') or {}).get('runs', [])
+        channel = self._text(r.get('ownerText') or r.get('shortBylineText') or r.get('longBylineText'))
+        runs = (r.get('ownerText') or r.get('shortBylineText') or r.get('longBylineText') or {}).get('runs', [])
         if runs:
             channel_id = runs[0].get('navigationEndpoint', {}).get('browseEndpoint', {}).get('browseId', '')
         duration_text = self._text(r.get('lengthText'))
+        title = self._text(r.get('title') or r.get('headline'))
+        if not title:
+            return None
         return {
             'type': 'video', 'video_id': vid,
-            'title': self._text(r.get('title')), 'channel': channel, 'channel_id': channel_id,
-            'thumbnail': self._thumb(r.get('thumbnail')),
+            'title': title, 'channel': channel, 'channel_id': channel_id,
+            'thumbnail': self._thumb(r.get('thumbnail')) or self._image_url(r),
             'description': self._text(r.get('descriptionSnippet')),
             'duration': self._duration_seconds(duration_text),
+        }
+
+    def _video_from_lockup(self, r):
+        if not isinstance(r, dict):
+            return None
+        content_type = r.get('contentType', '')
+        if content_type and content_type not in ('LOCKUP_CONTENT_TYPE_VIDEO', 'LOCKUP_CONTENT_TYPE_SHORTS'):
+            return None
+        vid = r.get('contentId') or r.get('videoId')
+        if not isinstance(vid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
+            return None
+        meta = r.get('metadata', {}).get('lockupMetadataViewModel', {})
+        title = self._text(meta.get('title'))
+        if not title:
+            label = r.get('rendererContext', {}).get('accessibilityContext', {}).get('label', '')
+            if isinstance(label, str) and label:
+                title = label.split('\n')[0].strip()
+        if not title:
+            title = 'YouTube 视频'
+
+        channel = ''
+        rows = meta.get('metadata', {}).get('contentMetadataViewModel', {}).get('metadataRows', [])
+        for row in rows:
+            for part in row.get('metadataParts', []) if isinstance(row, dict) else []:
+                text = self._text(part.get('text'))
+                if text and not channel:
+                    channel = text
+                    break
+            if channel:
+                break
+
+        return {
+            'type': 'video', 'video_id': vid,
+            'title': title,
+            'channel': channel,
+            'channel_id': self._channel_id_from_node(meta) or self._channel_id_from_node(r),
+            'thumbnail': self._image_url(r),
+            'description': '',
+            'duration': 0,
+        }
+
+    def _video_from_card(self, r):
+        if not isinstance(r, dict):
+            return None
+        vid = r.get('videoId') or r.get('contentId')
+        if not isinstance(vid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
+            return None
+        title = self._text(r.get('title') or r.get('headline'))
+        if not title:
+            title = self._text(r.get('metadata', {}).get('lockupMetadataViewModel', {}).get('title'))
+        if not title:
+            return None
+        return {
+            'type': 'video', 'video_id': vid,
+            'title': title,
+            'channel': self._text(r.get('ownerText') or r.get('shortBylineText') or r.get('longBylineText')),
+            'channel_id': self._channel_id_from_node(r),
+            'thumbnail': self._thumb(r.get('thumbnail')) or self._image_url(r),
+            'description': self._text(r.get('descriptionSnippet')),
+            'duration': self._duration_seconds(self._text(r.get('lengthText'))),
         }
 
     def _channel_from_renderer(self, r):
@@ -196,24 +307,41 @@ class YouTubeClient:
             return
         if not isinstance(node, dict):
             return
-        for key in ('videoRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'playlistVideoRenderer', 'richItemRenderer'):
+
+        for key in ('videoRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'playlistVideoRenderer'):
             if key in node:
-                target = node[key]
-                if key == 'richItemRenderer':
-                    target = target.get('content', {}).get('videoRenderer', {})
-                item = self._video_from_renderer(target)
+                item = self._video_from_renderer(node[key])
                 if item:
                     out.append(item)
+
+        for key in ('videoCardRenderer', 'compactVideoCardRenderer'):
+            if key in node:
+                item = self._video_from_card(node[key])
+                if item:
+                    out.append(item)
+
+        if 'lockupViewModel' in node:
+            item = self._video_from_lockup(node['lockupViewModel'])
+            if item:
+                out.append(item)
+
+        if 'shortsLockupViewModel' in node:
+            item = self._video_from_lockup(node['shortsLockupViewModel'])
+            if item:
+                out.append(item)
+
         for key in ('channelRenderer', 'compactChannelRenderer'):
             if key in node:
                 item = self._channel_from_renderer(node[key])
                 if item:
                     out.append(item)
+
         if 'continuationItemRenderer' in node:
             ep = node['continuationItemRenderer'].get('continuationEndpoint', {})
             token = ep.get('continuationCommand', {}).get('token')
             if token:
                 continuations.append(token)
+
         for value in node.values():
             self._collect(value, out, continuations)
 
@@ -233,7 +361,11 @@ class YouTubeClient:
         return self._parse(self._post('search', {'continuation': continuation} if continuation else {'query': query}))
 
     def trending(self, continuation=None):
-        return self._parse(self._post('browse', {'continuation': continuation} if continuation else {'browseId': 'FEtrending'}))
+        # YouTube retired the old FEtrending feed. FEwhat_to_watch is the
+        # current Home/Recommended feed and works for both signed-in and
+        # signed-out sessions.
+        payload = {'continuation': continuation} if continuation else {'browseId': 'FEwhat_to_watch'}
+        return self._parse(self._post('browse', payload))
 
     def subscriptions(self, continuation=None):
         if not self.has_account_cookies():
