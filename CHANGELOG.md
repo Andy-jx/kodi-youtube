@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.4
+
+- “我的订阅”首次加载改为直接请求 `https://www.youtube.com/feed/subscriptions`，使用已导入 Cookie 读取该账号真实网页中的 `ytInitialData`。
+- “热门 / 推荐”首次加载优先直接解析 YouTube 首页 `ytInitialData`，不再只依赖内部 browseId。
+- 继续保留 Innertube continuation / browse 作为翻页和兜底路径。
+- 新增更宽松的新式视频节点识别：`videoId` / `contentId`、`lockupViewModel`、`videoCardViewModel`、Shorts/Reel 等结构均可递归提取。
+- 如果 YouTube 返回的数据确实无法解析，不再静默显示空白，而是提示打开“诊断信息”。
+
 ## 1.1.3
 
 - 修复“我的订阅”打开后空白：适配 YouTube 2026 正在使用的 `lockupViewModel`、`videoCardRenderer` 等新版 feed renderer。
