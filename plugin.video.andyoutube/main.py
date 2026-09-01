@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import os
-import shutil
 import sys
 from urllib.parse import parse_qsl, urlencode
 
@@ -68,7 +67,11 @@ def finish(content='videos'):
 
 
 def notify(msg, icon=xbmcgui.NOTIFICATION_INFO):
-    xbmcgui.Dialog().notification(ADDON.getAddonInfo('name'), msg, icon, 4000)
+    xbmcgui.Dialog().notification(ADDON.getAddonInfo('name'), msg, icon, 5000)
+
+
+def log_error(prefix, exc):
+    xbmc.log('[AndyYouTube] %s: %r' % (prefix, exc), xbmc.LOGERROR)
 
 
 def client():
@@ -79,8 +82,35 @@ def client():
     )
 
 
+def cookie_exists():
+    try:
+        return xbmcvfs.exists(COOKIE_FILE)
+    except Exception:
+        return os.path.exists(COOKIE_FILE)
+
+
+def remove_cookie_file():
+    try:
+        if xbmcvfs.exists(COOKIE_FILE):
+            xbmcvfs.delete(COOKIE_FILE)
+            return
+    except Exception:
+        pass
+    try:
+        if os.path.exists(COOKIE_FILE):
+            os.remove(COOKIE_FILE)
+    except Exception:
+        pass
+
+
 def account_ready():
-    return os.path.exists(COOKIE_FILE) and client().account_test()
+    if not cookie_exists():
+        return False
+    try:
+        return client().has_account_cookies()
+    except Exception as exc:
+        log_error('cookie local check failed', exc)
+        return False
 
 
 def show_home():
@@ -114,42 +144,96 @@ def render_result(result, continuation_action=None, continuation_params=None):
 
 
 def import_cookies():
-    source = xbmcgui.Dialog().browse(1, '选择 YouTube cookies.txt', 'files', '.txt')
+    try:
+        source = xbmcgui.Dialog().browse(1, '选择 YouTube cookies.txt', 'files', '.txt')
+    except Exception as exc:
+        log_error('cookie picker failed', exc)
+        notify('无法打开文件选择器，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+        finish('files')
+        return
+
     if not source:
         finish('files')
         return
-    source = xbmcvfs.translatePath(source)
-    os.makedirs(PROFILE, exist_ok=True)
+
     try:
-        shutil.copyfile(source, COOKIE_FILE)
-    except Exception as exc:
-        notify('导入失败：%s' % exc, xbmcgui.NOTIFICATION_ERROR)
-        finish('files')
-        return
-    if client().account_test():
-        notify('YouTube 账号连接成功')
-        xbmc.executebuiltin('Container.Refresh')
-    else:
+        xbmcvfs.mkdirs(PROFILE)
+    except Exception:
         try:
-            os.remove(COOKIE_FILE)
-        except Exception:
-            pass
-        notify('cookies.txt 无效或已过期', xbmcgui.NOTIFICATION_ERROR)
+            os.makedirs(PROFILE, exist_ok=True)
+        except Exception as exc:
+            log_error('profile create failed', exc)
+            notify('无法创建插件数据目录', xbmcgui.NOTIFICATION_ERROR)
+            finish('files')
+            return
+
+    remove_cookie_file()
+
+    try:
+        copied = xbmcvfs.copy(source, COOKIE_FILE)
+        if not copied or not cookie_exists():
+            raise IOError('Kodi VFS copy returned false')
+    except Exception as exc:
+        log_error('cookie VFS copy failed', exc)
+        try:
+            local_source = xbmcvfs.translatePath(source)
+            src = xbmcvfs.File(local_source, 'rb')
+            data = src.readBytes()
+            src.close()
+            dst = xbmcvfs.File(COOKIE_FILE, 'wb')
+            dst.write(data)
+            dst.close()
+        except Exception as fallback_exc:
+            log_error('cookie fallback copy failed', fallback_exc)
+            remove_cookie_file()
+            notify('Cookie 文件导入失败，请确认文件可读取', xbmcgui.NOTIFICATION_ERROR)
+            finish('files')
+            return
+
+    try:
+        cookie_client = client()
+        if not cookie_client.has_account_cookies():
+            remove_cookie_file()
+            notify('不是有效的 YouTube cookies.txt，请重新导出当前 youtube.com Cookie', xbmcgui.NOTIFICATION_ERROR)
+            finish('files')
+            return
+
+        if cookie_client.account_test():
+            try:
+                os.chmod(COOKIE_FILE, 0o600)
+            except Exception:
+                pass
+            notify('YouTube 账号连接成功')
+            xbmc.executebuiltin('Container.Refresh')
+        else:
+            remove_cookie_file()
+            notify('Cookie 已导入，但 YouTube 登录验证失败；请重新导出后再试', xbmcgui.NOTIFICATION_ERROR)
+    except Exception as exc:
+        log_error('cookie validation failed', exc)
+        remove_cookie_file()
+        notify('Cookie 验证发生错误，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+
     finish('files')
 
 
 def account_status():
-    if account_ready():
-        choice = xbmcgui.Dialog().yesno('YouTube 账号', '当前 cookies 登录有效。\n\n是否移除当前账号？', yeslabel='移除账号', nolabel='保留')
-        if choice:
-            try:
-                os.remove(COOKIE_FILE)
-            except Exception:
-                pass
-            notify('已移除 YouTube 登录')
-            xbmc.executebuiltin('Container.Refresh')
-    else:
-        notify('当前没有有效的 YouTube 登录', xbmcgui.NOTIFICATION_WARNING)
+    if not account_ready():
+        notify('当前没有可用的 YouTube 登录', xbmcgui.NOTIFICATION_WARNING)
+        finish('files')
+        return
+
+    valid = False
+    try:
+        valid = client().account_test()
+    except Exception as exc:
+        log_error('account status check failed', exc)
+
+    status = '当前 Cookie 登录验证有效。' if valid else '已找到 Cookie，但在线验证暂未通过。'
+    choice = xbmcgui.Dialog().yesno('YouTube 账号', status + '\n\n是否移除当前账号？', yeslabel='移除账号', nolabel='保留')
+    if choice:
+        remove_cookie_file()
+        notify('已移除 YouTube 登录')
+        xbmc.executebuiltin('Container.Refresh')
     finish('files')
 
 
@@ -273,7 +357,7 @@ def route():
         notify(str(exc), xbmcgui.NOTIFICATION_ERROR)
         finish()
     except Exception as exc:
-        xbmc.log('[AndyYouTube] unexpected: %r' % exc, xbmc.LOGERROR)
+        log_error('unexpected', exc)
         notify('发生错误，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
         finish()
 
