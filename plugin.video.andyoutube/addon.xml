@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.2" provider-name="Andy-jx">
+<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.3" provider-name="Andy-jx">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="plugin.video.youtube" optional="true"/>
@@ -10,11 +10,11 @@
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">A lightweight YouTube browser for Kodi with account subscriptions, search, channels, local favorites and playback.</summary>
     <summary lang="zh_CN">适用于 Kodi 的轻量 YouTube 浏览插件，支持账号订阅、搜索、频道、本地喜欢和播放。</summary>
-    <description lang="zh_CN">无需个人 Google API Key。可导入用户自己的 YouTube cookies.txt，在 Kodi 中查看“我的订阅”，并将同一登录态传给 yt-dlp 以提高年龄限制、登录后可观看视频的播放成功率。搜索、热门、频道、本地喜欢、搜索历史和观看历史由本插件提供。</description>
+    <description lang="zh_CN">无需个人 Google API Key。可导入用户自己的 YouTube cookies.txt，在 Kodi 中查看“我的订阅”，并将同一登录态传给 yt-dlp 以提高年龄限制、登录后可观看视频的播放成功率。搜索、推荐、频道、本地喜欢、搜索历史和观看历史由本插件提供。</description>
     <platform>all</platform>
     <license>MIT</license>
     <source>https://github.com/Andy-jx/kodi-youtube</source>
     <website>https://github.com/Andy-jx/kodi-youtube</website>
-    <news lang="zh_CN">1.1.2：修复 Kodi 21 部分环境读取字符串设置时报 Invalid setting type 的问题，并新增插件独立诊断日志。</news>
+    <news lang="zh_CN">1.1.3：适配 YouTube 2026 新版 feed renderer，修复“我的订阅”空白，并将已失效 FEtrending 切换为当前首页推荐 feed。</news>
   </extension>
 </addon>
