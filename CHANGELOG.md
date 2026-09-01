@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.5
+
+- 发布 ZIP 在构建时内置最新 `yt-dlp` 与 `yt-dlp-ejs`，Kodi 不再依赖系统里是否恰好装有 `yt_dlp` Python 模块。
+- Windows 发布包同时内置官方 Deno 运行时，让 yt-dlp 可以处理 YouTube 2026 使用的 JavaScript challenge；播放账号可观看的登录/年龄限制视频时会自动携带已导入的 `cookies.txt`。
+- Cookie 感知的 yt-dlp 解析失败时写入 `AndyYouTube-debug.log`，不记录 Cookie 内容；自动模式仍保留官方 YouTube 插件作为公共视频最后兜底。
+- 播放解析器在顶层 URL 缺失时，会从 yt-dlp 返回的格式中选择带音视频的可直接播放流。
+- 搜索保留 Innertube 主路径，并新增 YouTube 浏览器搜索结果页 `ytInitialData` 兜底；接口结构变化时不至于直接失去搜索。
+
 ## 1.1.4
 
 - “我的订阅”首次加载改为直接请求 `https://www.youtube.com/feed/subscriptions`，使用已导入 Cookie 读取该账号真实网页中的 `ytInitialData`。

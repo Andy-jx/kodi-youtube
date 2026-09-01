@@ -33,6 +33,39 @@ jobs:
           PY
           )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Vendor yt-dlp and EJS
+        run: |
+          VENDOR="plugin.video.andyoutube/resources/lib/vendor"
+          rm -rf "$VENDOR"
+          mkdir -p "$VENDOR"
+          # yt-dlp itself and yt-dlp-ejs are pure Python/data packages. Avoid
+          # pulling Linux-specific wheels into an add-on that must run on Kodi
+          # for Windows/Android as well.
+          python -m pip install --disable-pip-version-check --no-compile --no-deps --target "$VENDOR" yt-dlp yt-dlp-ejs
+          PYTHONPATH="$VENDOR" python - <<'PY'
+          import yt_dlp
+          import yt_dlp_ejs
+          print('vendored yt-dlp OK:', getattr(getattr(yt_dlp, 'version', None), '__version__', 'unknown'))
+          print('vendored yt-dlp-ejs OK')
+          PY
+      - name: Bundle Deno for Windows Kodi
+        run: |
+          BIN="plugin.video.andyoutube/resources/bin/win64"
+          mkdir -p "$BIN"
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" \
+            -o /tmp/deno-win64.zip
+          python - <<'PY'
+          import os, zipfile
+          out = 'plugin.video.andyoutube/resources/bin/win64'
+          with zipfile.ZipFile('/tmp/deno-win64.zip') as zf:
+              member = next(name for name in zf.namelist() if name.endswith('deno.exe'))
+              data = zf.read(member)
+          path = os.path.join(out, 'deno.exe')
+          with open(path, 'wb') as fh:
+              fh.write(data)
+          print('bundled deno.exe bytes:', os.path.getsize(path))
+          PY
       - name: Build install ZIP
         run: |
           mkdir -p dist
