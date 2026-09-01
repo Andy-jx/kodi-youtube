@@ -7,6 +7,20 @@ import xbmcgui
 import xbmcplugin
 
 
+def _setting_text(addon, key, default=''):
+    """Read a Kodi setting as text without relying on typed getters.
+
+    Some Kodi builds/settings schemas can raise TypeError('Invalid setting type')
+    from getSettingString(). The legacy getSetting() API always returns text and is
+    compatible with Kodi 19-21, so prefer it here.
+    """
+    try:
+        value = addon.getSetting(key)
+        return value if value not in (None, '') else default
+    except Exception:
+        return default
+
+
 def _try_ytdlp(video_id, cookie_file=''):
     try:
         ytdlp = importlib.import_module('yt_dlp')
@@ -51,7 +65,7 @@ def play_video(handle, video_id, addon, cookie_file=''):
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
         return
 
-    backend = addon.getSettingString('playback_backend') or 'auto'
+    backend = _setting_text(addon, 'playback_backend', 'auto')
     if backend in ('auto', 'ytdlp'):
         result = _try_ytdlp(video_id, cookie_file)
         if result:

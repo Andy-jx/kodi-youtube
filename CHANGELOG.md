@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+- 修复 Kodi 21 部分环境中 `getSettingString()` 触发 `TypeError: Invalid setting type`，导致 Cookie 验证中断的问题。
+- 设置读取统一改用兼容性更好的文本读取方式，账号验证与播放后端均覆盖。
+- 新增插件独立诊断日志 `AndyYouTube-debug.log`，不再完全依赖 Kodi 总日志。
+- 首页新增“诊断信息”，可直接查看插件自己的诊断记录与日志路径。
+- 诊断日志只记录阶段、错误类型和堆栈，不写入 Cookie 内容。
+
 ## 1.1.1
 
 - 修复 Android / Kodi 文件选择器导入 `cookies.txt` 时可能报错的问题。

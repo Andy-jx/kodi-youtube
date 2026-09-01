@@ -9,7 +9,7 @@ import xbmcgui
 import xbmcplugin
 import xbmcvfs
 
-from resources.lib import storage
+from resources.lib import storage, debuglog
 from resources.lib.youtube import YouTubeClient, YouTubeError
 from resources.lib.player import play_video
 
@@ -18,6 +18,9 @@ HANDLE = int(sys.argv[1])
 BASE_URL = sys.argv[0]
 PROFILE = xbmcvfs.translatePath(ADDON.getAddonInfo('profile'))
 COOKIE_FILE = os.path.join(PROFILE, 'cookies.txt')
+DEBUG_LOG_FILE = os.path.join(PROFILE, 'AndyYouTube-debug.log')
+debuglog.configure(DEBUG_LOG_FILE)
+debuglog.write('plugin start', 'version=%s' % ADDON.getAddonInfo('version'))
 
 
 def plugin_url(**params):
@@ -72,12 +75,28 @@ def notify(msg, icon=xbmcgui.NOTIFICATION_INFO):
 
 def log_error(prefix, exc):
     xbmc.log('[AndyYouTube] %s: %r' % (prefix, exc), xbmc.LOGERROR)
+    debuglog.exception(prefix, exc)
+
+
+def setting_text(key, default=''):
+    """Read settings as text using Kodi's compatibility getter.
+
+    On some Kodi 21 builds getSettingString() can raise
+    TypeError('Invalid setting type') even for a string-backed setting.
+    getSetting() is compatible with both legacy and current settings schemas.
+    """
+    try:
+        value = ADDON.getSetting(key)
+        return value if value not in (None, '') else default
+    except Exception as exc:
+        log_error('setting read failed: %s' % key, exc)
+        return default
 
 
 def client():
     return YouTubeClient(
-        hl=ADDON.getSettingString('language') or 'zh-CN',
-        gl=ADDON.getSettingString('region') or 'SG',
+        hl=setting_text('language', 'zh-CN'),
+        gl=setting_text('region', 'SG'),
         cookie_file=COOKIE_FILE,
     )
 
@@ -126,6 +145,7 @@ def show_home():
     add_folder('搜索历史', 'search_history')
     add_folder('打开 YouTube 链接', 'open_url_prompt')
     add_folder('插件设置', 'settings')
+    add_folder('诊断信息', 'diagnostics')
     finish('files')
 
 
@@ -148,13 +168,15 @@ def import_cookies():
         source = xbmcgui.Dialog().browse(1, '选择 YouTube cookies.txt', 'files', '.txt')
     except Exception as exc:
         log_error('cookie picker failed', exc)
-        notify('无法打开文件选择器，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+        notify('无法打开文件选择器，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
         finish('files')
         return
 
     if not source:
         finish('files')
         return
+
+    debuglog.write('cookie import', 'file selected')
 
     try:
         xbmcvfs.mkdirs(PROFILE)
@@ -190,28 +212,34 @@ def import_cookies():
             finish('files')
             return
 
+    debuglog.write('cookie import', 'copy completed')
+
     try:
         cookie_client = client()
         if not cookie_client.has_account_cookies():
             remove_cookie_file()
+            debuglog.write('cookie validation', 'required YouTube account cookies not found')
             notify('不是有效的 YouTube cookies.txt，请重新导出当前 youtube.com Cookie', xbmcgui.NOTIFICATION_ERROR)
             finish('files')
             return
 
+        debuglog.write('cookie validation', 'local format accepted; starting online test')
         if cookie_client.account_test():
             try:
                 os.chmod(COOKIE_FILE, 0o600)
             except Exception:
                 pass
+            debuglog.write('cookie validation', 'online test passed')
             notify('YouTube 账号连接成功')
             xbmc.executebuiltin('Container.Refresh')
         else:
+            debuglog.write('cookie validation', 'online test returned false')
             remove_cookie_file()
             notify('Cookie 已导入，但 YouTube 登录验证失败；请重新导出后再试', xbmcgui.NOTIFICATION_ERROR)
     except Exception as exc:
         log_error('cookie validation failed', exc)
         remove_cookie_file()
-        notify('Cookie 验证发生错误，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+        notify('Cookie 验证发生错误，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
 
     finish('files')
 
@@ -234,6 +262,15 @@ def account_status():
         remove_cookie_file()
         notify('已移除 YouTube 登录')
         xbmc.executebuiltin('Container.Refresh')
+    finish('files')
+
+
+def show_diagnostics():
+    text = debuglog.read_text()
+    if not text:
+        text = '暂无诊断记录。'
+    body = '诊断日志路径：\n%s\n\n%s' % (DEBUG_LOG_FILE, text)
+    xbmcgui.Dialog().textviewer('Andy YouTube 诊断信息', body)
     finish('files')
 
 
@@ -314,6 +351,8 @@ def route():
             import_cookies()
         elif action == 'account_status':
             account_status()
+        elif action == 'diagnostics':
+            show_diagnostics()
         elif action == 'subscriptions':
             do_subscriptions(params)
         elif action == 'search_prompt':
@@ -353,12 +392,12 @@ def route():
         else:
             show_home()
     except YouTubeError as exc:
-        xbmc.log('[AndyYouTube] %s' % exc, xbmc.LOGERROR)
+        log_error('YouTube error', exc)
         notify(str(exc), xbmcgui.NOTIFICATION_ERROR)
         finish()
     except Exception as exc:
         log_error('unexpected', exc)
-        notify('发生错误，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+        notify('发生错误，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
         finish()
 
 
