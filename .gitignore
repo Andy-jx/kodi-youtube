@@ -5,3 +5,6 @@ __pycache__/
 .vscode/
 dist/
 *.zip
+cookies.txt
+*.cookies.txt
+**/cookies.txt
