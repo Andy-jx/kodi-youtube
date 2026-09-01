@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.5" provider-name="Andy-jx">
+<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.6" provider-name="Andy-jx">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="plugin.video.youtube" optional="true"/>
@@ -15,6 +15,6 @@
     <license>MIT</license>
     <source>https://github.com/Andy-jx/kodi-youtube</source>
     <website>https://github.com/Andy-jx/kodi-youtube</website>
-    <news lang="zh_CN">1.1.5：发布包内置 Cookie 感知的 yt-dlp/EJS 播放解析器，Windows 同捆 Deno 解决 YouTube JS 挑战，提升登录/年龄限制视频播放；搜索增加网页结果兜底。</news>
+    <news lang="zh_CN">1.1.6：Cookie 本地格式有效时不再因在线探测未确认而删除登录文件；在线验证改为提示性检查，订阅、搜索和账号授权视频播放可继续使用实际登录态测试。</news>
   </extension>
 </addon>

@@ -135,7 +135,7 @@ def account_ready():
 def show_home():
     if account_ready():
         add_folder('我的订阅', 'subscriptions')
-        add_folder('YouTube 账号：已连接', 'account_status')
+        add_folder('YouTube 账号：Cookie 已导入', 'account_status')
     else:
         add_folder('连接我的 YouTube 账号', 'import_cookies')
     add_folder('搜索 YouTube', 'search_prompt')
@@ -223,30 +223,46 @@ def import_cookies():
             finish('files')
             return
 
-        debuglog.write('cookie validation', 'local format accepted; starting online test')
-        if cookie_client.account_test():
-            try:
-                os.chmod(COOKIE_FILE, 0o600)
-            except Exception:
-                pass
+        try:
+            os.chmod(COOKIE_FILE, 0o600)
+        except Exception:
+            pass
+
+        # A successful local cookie parse is enough to keep the file. YouTube can
+        # return different signed-in page shapes, consent/interstitial pages, or
+        # transient challenge responses, so an online probe is advisory only.
+        debuglog.write('cookie validation', 'local format accepted; starting advisory online test')
+        try:
+            online_ok = cookie_client.account_test()
+        except Exception as online_exc:
+            online_ok = False
+            log_error('cookie advisory online test failed', online_exc)
+
+        if online_ok:
             debuglog.write('cookie validation', 'online test passed')
-            notify('YouTube 账号连接成功')
+            notify('YouTube Cookie 已导入，账号在线验证通过')
+        else:
+            debuglog.write('cookie validation', 'online test not confirmed; keeping cookie file')
+            notify('Cookie 已导入；在线验证暂未确认，可直接测试订阅、搜索和限制视频', xbmcgui.NOTIFICATION_WARNING)
+
+        xbmc.executebuiltin('Container.Refresh')
+    except Exception as exc:
+        # Keep a locally valid cookie file even if the advisory validation path
+        # itself changes. Playback/search/subscriptions are the real functional
+        # tests and will provide their own diagnostics.
+        log_error('cookie validation failed', exc)
+        if cookie_exists():
+            notify('Cookie 已保存；在线验证发生错误，可先直接测试播放或查看诊断信息', xbmcgui.NOTIFICATION_WARNING)
             xbmc.executebuiltin('Container.Refresh')
         else:
-            debuglog.write('cookie validation', 'online test returned false')
-            remove_cookie_file()
-            notify('Cookie 已导入，但 YouTube 登录验证失败；请重新导出后再试', xbmcgui.NOTIFICATION_ERROR)
-    except Exception as exc:
-        log_error('cookie validation failed', exc)
-        remove_cookie_file()
-        notify('Cookie 验证发生错误，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
+            notify('Cookie 验证发生错误，请打开“诊断信息”查看详情', xbmcgui.NOTIFICATION_ERROR)
 
     finish('files')
 
 
 def account_status():
     if not account_ready():
-        notify('当前没有可用的 YouTube 登录', xbmcgui.NOTIFICATION_WARNING)
+        notify('当前没有可用的 YouTube Cookie', xbmcgui.NOTIFICATION_WARNING)
         finish('files')
         return
 
@@ -256,11 +272,14 @@ def account_status():
     except Exception as exc:
         log_error('account status check failed', exc)
 
-    status = '当前 Cookie 登录验证有效。' if valid else '已找到 Cookie，但在线验证暂未通过。'
-    choice = xbmcgui.Dialog().yesno('YouTube 账号', status + '\n\n是否移除当前账号？', yeslabel='移除账号', nolabel='保留')
+    if valid:
+        status = 'Cookie 已导入，当前在线验证通过。'
+    else:
+        status = 'Cookie 已导入；在线验证暂未确认。\n这不会阻止插件继续尝试订阅、搜索和账号授权视频播放。'
+    choice = xbmcgui.Dialog().yesno('YouTube 账号', status + '\n\n是否移除当前 Cookie？', yeslabel='移除 Cookie', nolabel='保留')
     if choice:
         remove_cookie_file()
-        notify('已移除 YouTube 登录')
+        notify('已移除 YouTube Cookie')
         xbmc.executebuiltin('Container.Refresh')
     finish('files')
 
