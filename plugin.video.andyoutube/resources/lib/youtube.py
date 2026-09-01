@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import json
+import os
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -12,20 +15,77 @@ class YouTubeError(Exception):
 
 class YouTubeClient:
     HOME = 'https://www.youtube.com/'
+    ORIGIN = 'https://www.youtube.com'
 
-    def __init__(self, hl='zh-CN', gl='SG'):
+    def __init__(self, hl='zh-CN', gl='SG', cookie_file=''):
         self.hl = hl
         self.gl = gl
+        self.cookie_file = cookie_file or ''
         self.api_key = None
         self.client_version = None
         self.visitor_data = ''
         self.user_agent = 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 Chrome/124 Safari/537.36'
+        self.cookies = self._load_netscape_cookies(self.cookie_file)
 
-    def _request_text(self, url):
-        req = Request(url, headers={
+    @staticmethod
+    def _load_netscape_cookies(path):
+        cookies = {}
+        if not path or not os.path.exists(path):
+            return cookies
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 7:
+                        domain, _, _, _, _, name, value = parts[:7]
+                        if 'youtube.com' in domain or 'google.com' in domain:
+                            cookies[name] = value
+        except Exception:
+            return {}
+        return cookies
+
+    def has_account_cookies(self):
+        return bool(self.cookies.get('SAPISID') or self.cookies.get('__Secure-3PAPISID'))
+
+    def _cookie_header(self):
+        if not self.cookies:
+            return ''
+        return '; '.join('%s=%s' % (k, v) for k, v in self.cookies.items())
+
+    def _auth_header(self):
+        sid = self.cookies.get('SAPISID') or self.cookies.get('__Secure-3PAPISID')
+        if not sid:
+            return ''
+        ts = str(int(time.time()))
+        digest = hashlib.sha1(('%s %s %s' % (ts, sid, self.ORIGIN)).encode('utf-8')).hexdigest()
+        return 'SAPISIDHASH %s_%s' % (ts, digest)
+
+    def _headers(self, json_request=False):
+        headers = {
             'User-Agent': self.user_agent,
             'Accept-Language': self.hl + ',en;q=0.8',
-        })
+        }
+        cookie = self._cookie_header()
+        if cookie:
+            headers['Cookie'] = cookie
+        auth = self._auth_header()
+        if auth:
+            headers['Authorization'] = auth
+            headers['X-Origin'] = self.ORIGIN
+            headers['X-Goog-AuthUser'] = '0'
+        if json_request:
+            headers.update({
+                'Content-Type': 'application/json',
+                'Origin': self.ORIGIN,
+                'Referer': self.HOME,
+            })
+        return headers
+
+    def _request_text(self, url):
+        req = Request(url, headers=self._headers(False))
         try:
             with urlopen(req, timeout=15) as r:
                 return r.read().decode('utf-8', 'replace')
@@ -67,18 +127,10 @@ class YouTubeClient:
         body = dict(payload)
         body.setdefault('context', self._context())
         url = 'https://www.youtube.com/youtubei/v1/%s?key=%s&prettyPrint=false' % (endpoint, self.api_key)
-        data = json.dumps(body).encode('utf-8')
-        req = Request(url, data=data, headers={
-            'User-Agent': self.user_agent,
-            'Content-Type': 'application/json',
-            'Origin': 'https://www.youtube.com',
-            'Referer': 'https://www.youtube.com/',
-            'Accept-Language': self.hl + ',en;q=0.8',
-        })
+        req = Request(url, data=json.dumps(body).encode('utf-8'), headers=self._headers(True))
         try:
             with urlopen(req, timeout=20) as r:
-                raw = r.read().decode('utf-8', 'replace')
-            return json.loads(raw)
+                return json.loads(r.read().decode('utf-8', 'replace'))
         except HTTPError as exc:
             try:
                 detail = exc.read().decode('utf-8', 'replace')[:300]
@@ -101,16 +153,13 @@ class YouTubeClient:
     @staticmethod
     def _thumb(obj):
         thumbs = ((obj or {}).get('thumbnails') or [])
-        if not thumbs:
-            return ''
-        return thumbs[-1].get('url', '')
+        return thumbs[-1].get('url', '') if thumbs else ''
 
     @staticmethod
     def _duration_seconds(text):
         try:
-            parts = [int(x) for x in (text or '').split(':')]
             total = 0
-            for p in parts:
+            for p in [int(x) for x in (text or '').split(':')]:
                 total = total * 60 + p
             return total
         except Exception:
@@ -124,30 +173,21 @@ class YouTubeClient:
         channel = self._text(r.get('ownerText') or r.get('shortBylineText'))
         runs = (r.get('ownerText') or r.get('shortBylineText') or {}).get('runs', [])
         if runs:
-            ep = runs[0].get('navigationEndpoint', {})
-            channel_id = ep.get('browseEndpoint', {}).get('browseId', '')
+            channel_id = runs[0].get('navigationEndpoint', {}).get('browseEndpoint', {}).get('browseId', '')
         duration_text = self._text(r.get('lengthText'))
         return {
-            'type': 'video',
-            'video_id': vid,
-            'title': self._text(r.get('title')),
-            'channel': channel,
-            'channel_id': channel_id,
+            'type': 'video', 'video_id': vid,
+            'title': self._text(r.get('title')), 'channel': channel, 'channel_id': channel_id,
             'thumbnail': self._thumb(r.get('thumbnail')),
             'description': self._text(r.get('descriptionSnippet')),
             'duration': self._duration_seconds(duration_text),
         }
 
     def _channel_from_renderer(self, r):
-        cid = r.get('channelId')
+        cid = r.get('channelId') or r.get('channelId', '')
         if not cid:
             return None
-        return {
-            'type': 'channel',
-            'channel_id': cid,
-            'title': self._text(r.get('title')),
-            'thumbnail': self._thumb(r.get('thumbnail')),
-        }
+        return {'type': 'channel', 'channel_id': cid, 'title': self._text(r.get('title')), 'thumbnail': self._thumb(r.get('thumbnail'))}
 
     def _collect(self, node, out, continuations):
         if isinstance(node, list):
@@ -156,9 +196,12 @@ class YouTubeClient:
             return
         if not isinstance(node, dict):
             return
-        for key in ('videoRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'playlistVideoRenderer'):
+        for key in ('videoRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'playlistVideoRenderer', 'richItemRenderer'):
             if key in node:
-                item = self._video_from_renderer(node[key])
+                target = node[key]
+                if key == 'richItemRenderer':
+                    target = target.get('content', {}).get('videoRenderer', {})
+                item = self._video_from_renderer(target)
                 if item:
                     out.append(item)
         for key in ('channelRenderer', 'compactChannelRenderer'):
@@ -177,8 +220,7 @@ class YouTubeClient:
     def _parse(self, data):
         items, cont = [], []
         self._collect(data, items, cont)
-        unique = []
-        seen = set()
+        unique, seen = [], set()
         for x in items:
             key = (x.get('type'), x.get('video_id') or x.get('channel_id'))
             if key in seen or not key[1]:
@@ -188,29 +230,31 @@ class YouTubeClient:
         return {'items': unique, 'continuation': cont[-1] if cont else ''}
 
     def search(self, query, continuation=None):
-        if continuation:
-            data = self._post('search', {'continuation': continuation})
-        else:
-            data = self._post('search', {'query': query})
-        return self._parse(data)
+        return self._parse(self._post('search', {'continuation': continuation} if continuation else {'query': query}))
 
     def trending(self, continuation=None):
-        if continuation:
-            data = self._post('browse', {'continuation': continuation})
-        else:
-            data = self._post('browse', {'browseId': 'FEtrending'})
-        return self._parse(data)
+        return self._parse(self._post('browse', {'continuation': continuation} if continuation else {'browseId': 'FEtrending'}))
+
+    def subscriptions(self, continuation=None):
+        if not self.has_account_cookies():
+            raise YouTubeError('尚未导入有效的 YouTube 登录 cookies.txt')
+        payload = {'continuation': continuation} if continuation else {'browseId': 'FEsubscriptions'}
+        return self._parse(self._post('browse', payload))
+
+    def account_test(self):
+        if not self.has_account_cookies():
+            return False
+        try:
+            data = self._post('browse', {'browseId': 'FEsubscriptions'})
+            return isinstance(data, dict) and not data.get('error')
+        except Exception:
+            return False
 
     def channel_videos(self, channel_id, continuation=None):
         if continuation:
             data = self._post('browse', {'continuation': continuation})
         else:
-            # YouTube channel "Videos" tab params. If YouTube changes this value,
-            # browse still fails cleanly rather than sending user credentials anywhere.
-            data = self._post('browse', {
-                'browseId': channel_id,
-                'params': 'EgZ2aWRlb3PyBgQKAjoA',
-            })
+            data = self._post('browse', {'browseId': channel_id, 'params': 'EgZ2aWRlb3PyBgQKAjoA'})
         return self._parse(data)
 
     @staticmethod
