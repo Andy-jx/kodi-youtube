@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 import importlib
+import os
 
 import xbmc
 import xbmcgui
 import xbmcplugin
 
 
-def _try_ytdlp(video_id):
+def _try_ytdlp(video_id, cookie_file=''):
     try:
         ytdlp = importlib.import_module('yt_dlp')
     except Exception:
@@ -19,6 +20,8 @@ def _try_ytdlp(video_id):
             'skip_download': True,
             'format': 'best[ext=mp4]/best',
         }
+        if cookie_file and os.path.exists(cookie_file):
+            opts['cookiefile'] = cookie_file
         with ytdlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         direct = info.get('url')
@@ -42,7 +45,7 @@ def _with_headers(url, headers):
     return url + ('|' + '&'.join(pairs) if pairs else '')
 
 
-def play_video(handle, video_id, addon):
+def play_video(handle, video_id, addon, cookie_file=''):
     if not video_id:
         xbmcgui.Dialog().notification(addon.getAddonInfo('name'), '缺少视频 ID', xbmcgui.NOTIFICATION_ERROR, 3500)
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
@@ -50,7 +53,7 @@ def play_video(handle, video_id, addon):
 
     backend = addon.getSettingString('playback_backend') or 'auto'
     if backend in ('auto', 'ytdlp'):
-        result = _try_ytdlp(video_id)
+        result = _try_ytdlp(video_id, cookie_file)
         if result:
             direct, headers = result
             li = xbmcgui.ListItem(path=_with_headers(direct, headers))
@@ -58,13 +61,10 @@ def play_video(handle, video_id, addon):
             xbmcplugin.setResolvedUrl(handle, True, li)
             return
         if backend == 'ytdlp':
-            xbmcgui.Dialog().notification(addon.getAddonInfo('name'), '本机没有可用的 yt-dlp', xbmcgui.NOTIFICATION_ERROR, 3500)
+            xbmcgui.Dialog().notification(addon.getAddonInfo('name'), 'yt-dlp 无法解析此视频', xbmcgui.NOTIFICATION_ERROR, 3500)
             xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
             return
 
-    # Search/browse stays in Andy YouTube. Only playback falls back to the
-    # official Kodi YouTube add-on, which is much less fragile than duplicating
-    # YouTube's cipher code inside this small add-on.
     target = 'plugin://plugin.video.youtube/play/?video_id=%s' % video_id
     xbmc.Player().play(target)
     xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())

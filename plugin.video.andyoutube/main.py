@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import os
+import shutil
 import sys
 from urllib.parse import parse_qsl, urlencode
 
@@ -6,6 +8,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
+import xbmcvfs
 
 from resources.lib import storage
 from resources.lib.youtube import YouTubeClient, YouTubeError
@@ -14,6 +17,8 @@ from resources.lib.player import play_video
 ADDON = xbmcaddon.Addon()
 HANDLE = int(sys.argv[1])
 BASE_URL = sys.argv[0]
+PROFILE = xbmcvfs.translatePath(ADDON.getAddonInfo('profile'))
+COOKIE_FILE = os.path.join(PROFILE, 'cookies.txt')
 
 
 def plugin_url(**params):
@@ -46,13 +51,10 @@ def add_video(item):
     })
     if thumb:
         li.setArt({'thumb': thumb, 'icon': thumb, 'fanart': thumb})
-
     fav = storage.is_favorite(video_id)
     fav_label = '移出我喜欢' if fav else '加入我喜欢'
     fav_action = 'remove_favorite' if fav else 'add_favorite'
-    ctx = [
-        (fav_label, 'RunPlugin(%s)' % plugin_url(action=fav_action, video_id=video_id, title=title, channel=channel, channel_id=channel_id, thumbnail=thumb)),
-    ]
+    ctx = [(fav_label, 'RunPlugin(%s)' % plugin_url(action=fav_action, video_id=video_id, title=title, channel=channel, channel_id=channel_id, thumbnail=thumb))]
     if channel_id:
         ctx.append(('进入作者频道', 'Container.Update(%s)' % plugin_url(action='channel', channel_id=channel_id, title=channel)))
     ctx.append(('刷新本页', 'Container.Refresh'))
@@ -65,7 +67,28 @@ def finish(content='videos'):
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
+def notify(msg, icon=xbmcgui.NOTIFICATION_INFO):
+    xbmcgui.Dialog().notification(ADDON.getAddonInfo('name'), msg, icon, 4000)
+
+
+def client():
+    return YouTubeClient(
+        hl=ADDON.getSettingString('language') or 'zh-CN',
+        gl=ADDON.getSettingString('region') or 'SG',
+        cookie_file=COOKIE_FILE,
+    )
+
+
+def account_ready():
+    return os.path.exists(COOKIE_FILE) and client().account_test()
+
+
 def show_home():
+    if account_ready():
+        add_folder('我的订阅', 'subscriptions')
+        add_folder('YouTube 账号：已连接', 'account_status')
+    else:
+        add_folder('连接我的 YouTube 账号', 'import_cookies')
     add_folder('搜索 YouTube', 'search_prompt')
     add_folder('热门 / 推荐', 'trending')
     add_folder('我喜欢的视频（本地）', 'favorites')
@@ -90,15 +113,44 @@ def render_result(result, continuation_action=None, continuation_params=None):
     finish()
 
 
-def notify(msg, icon=xbmcgui.NOTIFICATION_INFO):
-    xbmcgui.Dialog().notification(ADDON.getAddonInfo('name'), msg, icon, 3500)
+def import_cookies():
+    source = xbmcgui.Dialog().browse(1, '选择 YouTube cookies.txt', 'files', '.txt')
+    if not source:
+        finish('files')
+        return
+    source = xbmcvfs.translatePath(source)
+    os.makedirs(PROFILE, exist_ok=True)
+    try:
+        shutil.copyfile(source, COOKIE_FILE)
+    except Exception as exc:
+        notify('导入失败：%s' % exc, xbmcgui.NOTIFICATION_ERROR)
+        finish('files')
+        return
+    if client().account_test():
+        notify('YouTube 账号连接成功')
+        xbmc.executebuiltin('Container.Refresh')
+    else:
+        try:
+            os.remove(COOKIE_FILE)
+        except Exception:
+            pass
+        notify('cookies.txt 无效或已过期', xbmcgui.NOTIFICATION_ERROR)
+    finish('files')
 
 
-def client():
-    return YouTubeClient(
-        hl=ADDON.getSettingString('language') or 'zh-CN',
-        gl=ADDON.getSettingString('region') or 'SG',
-    )
+def account_status():
+    if account_ready():
+        choice = xbmcgui.Dialog().yesno('YouTube 账号', '当前 cookies 登录有效。\n\n是否移除当前账号？', yeslabel='移除账号', nolabel='保留')
+        if choice:
+            try:
+                os.remove(COOKIE_FILE)
+            except Exception:
+                pass
+            notify('已移除 YouTube 登录')
+            xbmc.executebuiltin('Container.Refresh')
+    else:
+        notify('当前没有有效的 YouTube 登录', xbmcgui.NOTIFICATION_WARNING)
+    finish('files')
 
 
 def search_prompt():
@@ -114,13 +166,16 @@ def do_search(params):
     q = params.get('q', '')
     if not q:
         return search_prompt()
-    result = client().search(q, continuation=params.get('continuation'))
-    render_result(result, 'search', {'q': q})
+    render_result(client().search(q, continuation=params.get('continuation')), 'search', {'q': q})
 
 
 def do_trending(params):
-    result = client().trending(continuation=params.get('continuation'))
-    render_result(result, 'trending', {})
+    render_result(client().trending(continuation=params.get('continuation')), 'trending', {})
+
+
+def do_subscriptions(params):
+    result = client().subscriptions(continuation=params.get('continuation'))
+    render_result(result, 'subscriptions', {})
 
 
 def do_channel(params):
@@ -171,6 +226,12 @@ def route():
     try:
         if action == 'home':
             show_home()
+        elif action == 'import_cookies':
+            import_cookies()
+        elif action == 'account_status':
+            account_status()
+        elif action == 'subscriptions':
+            do_subscriptions(params)
         elif action == 'search_prompt':
             search_prompt()
         elif action == 'search':
@@ -188,14 +249,9 @@ def route():
         elif action == 'open_url_prompt':
             open_url_prompt()
         elif action == 'play':
-            item = {
-                'video_id': params.get('video_id', ''),
-                'title': params.get('title', ''),
-                'channel': params.get('channel', ''),
-                'thumbnail': params.get('thumbnail', ''),
-            }
+            item = {'video_id': params.get('video_id', ''), 'title': params.get('title', ''), 'channel': params.get('channel', ''), 'thumbnail': params.get('thumbnail', '')}
             storage.add_history(item)
-            play_video(HANDLE, item['video_id'], ADDON)
+            play_video(HANDLE, item['video_id'], ADDON, COOKIE_FILE)
         elif action == 'add_favorite':
             storage.add_favorite(params)
             notify('已加入我喜欢')
