@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.1" provider-name="Andy-jx">
+<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.1.2" provider-name="Andy-jx">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="plugin.video.youtube" optional="true"/>
@@ -15,6 +15,6 @@
     <license>MIT</license>
     <source>https://github.com/Andy-jx/kodi-youtube</source>
     <website>https://github.com/Andy-jx/kodi-youtube</website>
-    <news lang="zh_CN">1.1.1：修复 Android/Kodi 文件选择器导入 cookies.txt 的兼容问题，改用 Kodi VFS 复制并增强错误提示。</news>
+    <news lang="zh_CN">1.1.2：修复 Kodi 21 部分环境读取字符串设置时报 Invalid setting type 的问题，并新增插件独立诊断日志。</news>
   </extension>
 </addon>
