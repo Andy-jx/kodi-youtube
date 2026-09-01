@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.3
+
+- 修复“我的订阅”打开后空白：适配 YouTube 2026 正在使用的 `lockupViewModel`、`videoCardRenderer` 等新版 feed renderer。
+- `richItemRenderer` 内的新式视频结构现在可以递归识别，不再只认旧 `videoRenderer`。
+- YouTube 已停用旧 `FEtrending` feed，“热门 / 推荐”改用当前 `FEwhat_to_watch` 首页推荐 feed。
+- 保留旧 renderer 兼容，搜索、频道页与新版 feed 可同时解析。
+
 ## 1.1.2
 
 - 修复 Kodi 21 部分环境中 `getSettingString()` 触发 `TypeError: Invalid setting type`，导致 Cookie 验证中断的问题。
