@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.andyoutube" name="Andy YouTube" version="1.0.0" provider-name="Andy-jx">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+    <import addon="plugin.video.youtube" optional="true"/>
+  </requires>
+  <extension point="xbmc.python.pluginsource" library="main.py">
+    <provides>video</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">A lightweight YouTube browser for Kodi with search, channels, local favorites and playback.</summary>
+    <summary lang="zh_CN">适用于 Kodi 的轻量 YouTube 浏览插件，支持搜索、频道、本地喜欢和播放。</summary>
+    <description lang="zh_CN">无需个人 Google API Key 的 YouTube 浏览前端。搜索、热门、频道、本地喜欢、搜索历史和观看历史由本插件提供；播放优先使用本地 yt-dlp，未安装时回退到 Kodi 官方 YouTube 插件播放。</description>
+    <platform>all</platform>
+    <license>MIT</license>
+    <source>https://github.com/Andy-jx/kodi-youtube</source>
+    <website>https://github.com/Andy-jx/kodi-youtube</website>
+  </extension>
+</addon>

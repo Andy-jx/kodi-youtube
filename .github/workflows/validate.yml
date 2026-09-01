@@ -1,0 +1,34 @@
+name: Validate Kodi Add-on
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Python
+        run: python -m compileall plugin.video.andyoutube
+      - name: Validate XML
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          ET.parse('plugin.video.andyoutube/addon.xml')
+          ET.parse('plugin.video.andyoutube/resources/settings.xml')
+          print('XML OK')
+          PY
+      - name: Build install ZIP
+        run: |
+          mkdir -p dist
+          zip -r "dist/plugin.video.andyoutube-1.0.0.zip" plugin.video.andyoutube -x '*/__pycache__/*' '*.pyc'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin.video.andyoutube-1.0.0
+          path: dist/plugin.video.andyoutube-1.0.0.zip

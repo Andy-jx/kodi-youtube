@@ -1,0 +1,226 @@
+# -*- coding: utf-8 -*-
+import sys
+from urllib.parse import parse_qsl, urlencode
+
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcplugin
+
+from resources.lib import storage
+from resources.lib.youtube import YouTubeClient, YouTubeError
+from resources.lib.player import play_video
+
+ADDON = xbmcaddon.Addon()
+HANDLE = int(sys.argv[1])
+BASE_URL = sys.argv[0]
+
+
+def plugin_url(**params):
+    return BASE_URL + '?' + urlencode({k: v for k, v in params.items() if v is not None})
+
+
+def add_folder(label, action, art=None, context=None, **params):
+    li = xbmcgui.ListItem(label=label)
+    if art:
+        li.setArt(art)
+    li.setInfo('video', {'title': label})
+    if context:
+        li.addContextMenuItems(context)
+    xbmcplugin.addDirectoryItem(HANDLE, plugin_url(action=action, **params), li, True)
+
+
+def add_video(item):
+    title = item.get('title') or 'Untitled'
+    video_id = item.get('video_id') or ''
+    channel_id = item.get('channel_id') or ''
+    channel = item.get('channel') or ''
+    thumb = item.get('thumbnail') or ''
+    li = xbmcgui.ListItem(label=title)
+    li.setProperty('IsPlayable', 'true')
+    li.setInfo('video', {
+        'title': title,
+        'plot': item.get('description', ''),
+        'studio': channel,
+        'duration': item.get('duration', 0) or 0,
+    })
+    if thumb:
+        li.setArt({'thumb': thumb, 'icon': thumb, 'fanart': thumb})
+
+    fav = storage.is_favorite(video_id)
+    fav_label = '移出我喜欢' if fav else '加入我喜欢'
+    fav_action = 'remove_favorite' if fav else 'add_favorite'
+    ctx = [
+        (fav_label, 'RunPlugin(%s)' % plugin_url(action=fav_action, video_id=video_id, title=title, channel=channel, channel_id=channel_id, thumbnail=thumb)),
+    ]
+    if channel_id:
+        ctx.append(('进入作者频道', 'Container.Update(%s)' % plugin_url(action='channel', channel_id=channel_id, title=channel)))
+    ctx.append(('刷新本页', 'Container.Refresh'))
+    li.addContextMenuItems(ctx)
+    xbmcplugin.addDirectoryItem(HANDLE, plugin_url(action='play', video_id=video_id, title=title, channel=channel, thumbnail=thumb), li, False)
+
+
+def finish(content='videos'):
+    xbmcplugin.setContent(HANDLE, content)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def show_home():
+    add_folder('搜索 YouTube', 'search_prompt')
+    add_folder('热门 / 推荐', 'trending')
+    add_folder('我喜欢的视频（本地）', 'favorites')
+    add_folder('观看历史', 'history')
+    add_folder('搜索历史', 'search_history')
+    add_folder('打开 YouTube 链接', 'open_url_prompt')
+    add_folder('插件设置', 'settings')
+    finish('files')
+
+
+def render_result(result, continuation_action=None, continuation_params=None):
+    for item in result.get('items', []):
+        if item.get('type') == 'video' and item.get('video_id'):
+            add_video(item)
+        elif item.get('type') == 'channel' and item.get('channel_id'):
+            add_folder('[频道] ' + item.get('title', '频道'), 'channel', channel_id=item['channel_id'], title=item.get('title', ''))
+    token = result.get('continuation')
+    if token and continuation_action:
+        params = dict(continuation_params or {})
+        params['continuation'] = token
+        add_folder('下一页 ▶', continuation_action, **params)
+    finish()
+
+
+def notify(msg, icon=xbmcgui.NOTIFICATION_INFO):
+    xbmcgui.Dialog().notification(ADDON.getAddonInfo('name'), msg, icon, 3500)
+
+
+def client():
+    return YouTubeClient(
+        hl=ADDON.getSettingString('language') or 'zh-CN',
+        gl=ADDON.getSettingString('region') or 'SG',
+    )
+
+
+def search_prompt():
+    q = xbmcgui.Dialog().input('搜索 YouTube', type=xbmcgui.INPUT_ALPHANUM)
+    if not q:
+        finish()
+        return
+    storage.add_search(q)
+    xbmc.executebuiltin('Container.Update(%s)' % plugin_url(action='search', q=q))
+
+
+def do_search(params):
+    q = params.get('q', '')
+    if not q:
+        return search_prompt()
+    result = client().search(q, continuation=params.get('continuation'))
+    render_result(result, 'search', {'q': q})
+
+
+def do_trending(params):
+    result = client().trending(continuation=params.get('continuation'))
+    render_result(result, 'trending', {})
+
+
+def do_channel(params):
+    cid = params.get('channel_id', '')
+    if not cid:
+        notify('缺少频道 ID', xbmcgui.NOTIFICATION_ERROR)
+        finish()
+        return
+    result = client().channel_videos(cid, continuation=params.get('continuation'))
+    render_result(result, 'channel', {'channel_id': cid, 'title': params.get('title', '')})
+
+
+def show_favorites():
+    for item in storage.get_favorites():
+        add_video(item)
+    finish()
+
+
+def show_history():
+    for item in storage.get_history():
+        add_video(item)
+    finish()
+
+
+def show_search_history():
+    for q in storage.get_searches():
+        add_folder(q, 'search', q=q, context=[('删除这条记录', 'RunPlugin(%s)' % plugin_url(action='remove_search', q=q))])
+    finish('files')
+
+
+def open_url_prompt():
+    value = xbmcgui.Dialog().input('粘贴 YouTube 视频或 Shorts 链接', type=xbmcgui.INPUT_ALPHANUM)
+    if not value:
+        finish()
+        return
+    vid = YouTubeClient.extract_video_id(value)
+    if not vid:
+        notify('没有识别到 YouTube 视频 ID', xbmcgui.NOTIFICATION_ERROR)
+        finish()
+        return
+    xbmc.executebuiltin('PlayMedia(%s)' % plugin_url(action='play', video_id=vid, title='YouTube'))
+    finish()
+
+
+def route():
+    params = dict(parse_qsl(sys.argv[2][1:])) if len(sys.argv) > 2 else {}
+    action = params.get('action', 'home')
+    try:
+        if action == 'home':
+            show_home()
+        elif action == 'search_prompt':
+            search_prompt()
+        elif action == 'search':
+            do_search(params)
+        elif action == 'trending':
+            do_trending(params)
+        elif action == 'channel':
+            do_channel(params)
+        elif action == 'favorites':
+            show_favorites()
+        elif action == 'history':
+            show_history()
+        elif action == 'search_history':
+            show_search_history()
+        elif action == 'open_url_prompt':
+            open_url_prompt()
+        elif action == 'play':
+            item = {
+                'video_id': params.get('video_id', ''),
+                'title': params.get('title', ''),
+                'channel': params.get('channel', ''),
+                'thumbnail': params.get('thumbnail', ''),
+            }
+            storage.add_history(item)
+            play_video(HANDLE, item['video_id'], ADDON)
+        elif action == 'add_favorite':
+            storage.add_favorite(params)
+            notify('已加入我喜欢')
+            xbmc.executebuiltin('Container.Refresh')
+        elif action == 'remove_favorite':
+            storage.remove_favorite(params.get('video_id', ''))
+            notify('已移出我喜欢')
+            xbmc.executebuiltin('Container.Refresh')
+        elif action == 'remove_search':
+            storage.remove_search(params.get('q', ''))
+            xbmc.executebuiltin('Container.Refresh')
+        elif action == 'settings':
+            ADDON.openSettings()
+            finish('files')
+        else:
+            show_home()
+    except YouTubeError as exc:
+        xbmc.log('[AndyYouTube] %s' % exc, xbmc.LOGERROR)
+        notify(str(exc), xbmcgui.NOTIFICATION_ERROR)
+        finish()
+    except Exception as exc:
+        xbmc.log('[AndyYouTube] unexpected: %r' % exc, xbmc.LOGERROR)
+        notify('发生错误，请查看 kodi.log', xbmcgui.NOTIFICATION_ERROR)
+        finish()
+
+
+if __name__ == '__main__':
+    route()
